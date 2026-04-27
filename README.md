@@ -1,4 +1,4 @@
-# Solar Flare LSTM Prototype (Finalized)
+# Solar Flare LSTM Prototype
 
 This repository is the **final corrected prototype package** for region-level solar flare forecasting using:
 
@@ -192,7 +192,7 @@ Final working development run used:
 
 ### Why this matters
 
-A large direct query to JSOC can fail with an out-of-memory error. During development, this happened when querying too much SHARP data at once, which is why this repo now uses daily chunking instead. That earlier failure is documented in the development logs. fileciteturn0file0
+A large direct query to JSOC can fail with an out-of-memory error. During development, this happened when querying too much SHARP data at once, which is why this repo now uses daily chunking instead.
 
 ---
 
@@ -422,7 +422,152 @@ In the final sanity check, the top inferred row was still labeled `target = 0` a
 
 ---
 
-## 9. All major corrections applied in this finalized version
+## 9. Challenges faced during project development
+
+This section captures the real execution and debugging challenges faced while building the prototype. These are important because they show that the project was not only about model design, but also about solving practical data engineering, integration, and evaluation problems.
+
+### 9.1 JSOC SHARP query out-of-memory error
+
+One of the first major issues occurred while trying to query a larger SHARP dataset in one call through the `drms` client. The request failed with a `DrmsQueryError: query failed: out of memory for query result` because the backend attempted to return an extremely large set of columns and records. This made it impossible to download the required SHARP data in a single request.
+
+**Resolution:**
+- stopped using one large SHARP query
+- switched to **daily chunked SHARP acquisition** using `02e_fetch_sharp_range_chunked.py`
+- combined the daily outputs into one `sharp_keywords.csv`
+
+This was the most important early fix because the entire downstream pipeline depended on reliable SHARP acquisition.
+
+### 9.2 FTP/archive discovery script hanging
+
+While trying to discover SWPC archive event-report locations automatically, the recursive FTP traversal approach became effectively unusable because it stalled after connecting to the SWPC FTP host. The problem was not authentication, but the size and depth of the archive tree.
+
+**Resolution:**
+- stopped using recursive FTP crawling for archive discovery
+- switched to directly downloading known daily report files through the NCEI HTTP archive structure
+- added a simpler event-report range downloader
+
+### 9.3 Missing region information in `goes_recent_flares.csv`
+
+The recent GOES flare feed was useful for flare timing and class, but it did **not** include the NOAA active-region identifier needed for region-aware SHARP labeling. This meant the flare list alone could not be used to generate the final labels.
+
+**Resolution:**
+- used **SWPC daily event reports** instead of relying only on `goes_recent_flares.csv`
+- parsed `XRA 1-8A` rows from the report text
+- extracted `peak_time`, `goes_class`, and `Reg#`
+
+### 9.4 Archived event report 404 error
+
+When downloading the daily event-report range, one of the requested archive files returned a `404 Not Found` error. This happened because the archive was not fully synchronized for the final spillover day needed to support the 24-hour future horizon.
+
+**Resolution:**
+- added a fallback in `02f_download_event_reports_range.py`
+- if the final archive day is unavailable, the script downloads the **current SWPC edited event report** and saves it under the expected spillover-day filename
+
+### 9.5 Datetime parsing problems across multiple data sources
+
+The project used different timestamp formats across sources:
+
+- SHARP timestamps in JSOC format, such as `2026.04.16_00:00:00_TAI`
+- GOES and event files in ISO UTC format, such as `2026-04-16T02:43:00Z`
+
+Initially, pandas could not reliably parse both families using the same logic, which caused rows to be dropped or parsed inconsistently.
+
+**Resolution:**
+- updated `parse_datetime_col()` to handle JSOC `_TAI` strings separately
+- handled ISO UTC timestamps with a different parsing path
+- normalized everything into a consistent `datetime64[ns]` representation for downstream processing
+
+### 9.6 `merge_asof` datetime dtype mismatch
+
+Even after timestamps were parsed successfully, the SHARP-GOES merge failed because the merge keys had different internal datetime resolutions:
+
+- one side had second-level resolution
+- the other had microsecond-level resolution
+
+This caused `pandas.errors.MergeError` during `merge_asof()`.
+
+**Resolution:**
+- explicitly converted both merge keys to the same datetime dtype inside `merge_sharp_with_goes()`
+- dropped invalid merge keys before running the as-of join
+
+### 9.7 Empty merged dataset caused by dropped SHARP timestamps
+
+At one point, the build script completed but wrote an empty processed CSV. This happened because SHARP timestamps were not being parsed correctly, so the input SHARP table became effectively empty before merging and label generation.
+
+**Resolution:**
+- fixed the SHARP timestamp parser in `utils.py`
+- revalidated the SHARP CSV to confirm row count, min/max timestamps, and dtype before rebuilding the dataset
+
+### 9.8 NOAA region-number mismatch (`4419` vs `14419`)
+
+After event parsing started working, the flare events still did not match SHARP regions because the SWPC event reports used shortened NOAA region numbers such as `4419`, while SHARP used modern numbering like `14419`.
+
+This caused all flare matches to fail, which in turn made the generated targets all zero.
+
+**Resolution:**
+- added a normalization step in `03a_parse_event_reports.py`
+- recent 4-digit region IDs were mapped to the 5-digit SHARP-compatible form by adding `10000`
+
+### 9.9 All-zero labels at `M1.0`
+
+The first version of the dataset was built using `--min_class M1.0`, but the selected development window contained only **B** and **C** flares. Therefore, even after the data and region matching issues were fixed, the label generation still produced no positive targets.
+
+**Resolution:**
+- changed the final working prototype threshold from `M1.0` to `C1.0`
+- rebuilt the dataset as `model_table_h24_C10.csv`
+
+This made the prototype trainable within the available event window.
+
+### 9.10 Validation split disappearing because of purge logic
+
+The original chronological split used a 24-hour purge window. On a short dataset, this caused the validation block to disappear entirely, which then broke scaling and training because the validation or test arrays had zero rows.
+
+**Resolution:**
+- updated `chronological_split()` to first try a purged time split
+- if validation/test became empty, the code automatically fell back to a plain chronological split without purge
+
+### 9.11 Validation and test windows with only one class
+
+Even after the split became non-empty, later parts of the timeline contained only negative samples. That meant validation and test metrics collapsed to zero because there were no positive examples in those windows.
+
+**Resolution:**
+- inspected the positive label counts by date
+- discovered that positive events were concentrated between `2026-04-16` and `2026-04-20`
+- created an **event-rich filtered dataset window**
+- retrained and evaluated on that event-focused range so that train, validation, and test all contained positive sequences
+
+### 9.12 PowerShell and command-line execution mistakes
+
+A few errors were caused by command formatting rather than model logic. One example was pasting the training command twice in a single line, which made argparse read `8python` as the value for `--epochs`.
+
+There were also minor PowerShell parser messages after multi-line output prints, which were not actual model failures but shell interpretation artifacts.
+
+**Resolution:**
+- reran commands in clean one-line format
+- used PowerShell backtick continuation where necessary
+- separated real Python errors from shell-only formatting issues
+
+### 9.13 Meaningful inference did not guarantee perfect final-row correctness
+
+The final inference pipeline worked and produced a sharply separated top candidate, but when the top alert was joined back to the final labeled row, that row still had `target = 0`. This showed that the learned ranking was useful, but thresholded alerts were still not perfectly calibrated.
+
+**Resolution / interpretation:**
+- treated the current model as a **high-recall early-warning ranking prototype**
+- did not overclaim it as an operationally calibrated system
+- kept this as an explicit limitation in the README and project documentation
+
+### 9.14 Missing `NOAA_ARS` values in SHARP data
+
+Many SHARP rows contained `NOAA_ARS = MISSING`, which reduced the quality of region-aware label generation because those rows could not be matched to flare events through NOAA region IDs.
+
+**Resolution:**
+- kept the rows for sequence continuity where possible
+- documented this as a data-quality limitation rather than discarding the entire dataset
+- recommended improved NOAA/HARP mapping as future work
+
+---
+
+## 10. All major corrections applied in this finalized version
 
 This final package includes the fixes for every major issue encountered during development:
 
@@ -455,7 +600,7 @@ This final package includes the fixes for every major issue encountered during d
 
 ---
 
-## 10. Suggested next improvements
+## 11. Suggested next improvements
 
 1. extend the date range substantially
 2. evaluate `C1.0`, `M1.0`, and stronger thresholds
@@ -467,7 +612,7 @@ This final package includes the fixes for every major issue encountered during d
 
 ---
 
-## 11. Final prototype summary
+## 12. Final prototype summary
 
 This finalized prototype successfully demonstrates the full workflow:
 
