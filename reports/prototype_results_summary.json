@@ -1,0 +1,69 @@
+{
+  "dataset": "model_table_h24_C10_event_window.csv",
+  "selected_threshold": 0.05,
+  "validation_best": {
+    "threshold": 0.05,
+    "precision": 0.5819672131147541,
+    "recall": 1.0,
+    "f1": 0.7357512953367875,
+    "pr_auc": 1.0,
+    "roc_auc": 1.0,
+    "tss": 0.9585028478437754,
+    "hss": 0.7161523444189472,
+    "tp": 71,
+    "tn": 1178,
+    "fp": 51,
+    "fn": 0
+  },
+  "test_metrics": {
+    "threshold": 0.05,
+    "precision": 0.392,
+    "recall": 1.0,
+    "f1": 0.5632183908045977,
+    "pr_auc": 0.9815746688345695,
+    "roc_auc": 0.9992465686113933,
+    "tss": 0.9390048154093098,
+    "hss": 0.538107752956636,
+    "tp": 49,
+    "tn": 1170,
+    "fp": 76,
+    "fn": 0
+  },
+  "top_inference": [
+    {
+      "HARPNUM": 13451,
+      "T_REC": "2026-04-20 23:48:00+00:00",
+      "flare_risk": 0.5567485,
+      "alert": 1,
+      "confidence": 0.5567485
+    },
+    {
+      "HARPNUM": 13459,
+      "T_REC": "2026-04-20 09:24:00+00:00",
+      "flare_risk": 0.030899195,
+      "alert": 0,
+      "confidence": 0.96910083
+    },
+    {
+      "HARPNUM": 13432,
+      "T_REC": "2026-04-18 15:00:00+00:00",
+      "flare_risk": 0.02984084,
+      "alert": 0,
+      "confidence": 0.9701592
+    },
+    {
+      "HARPNUM": 13429,
+      "T_REC": "2026-04-18 16:24:00+00:00",
+      "flare_risk": 0.029133704,
+      "alert": 0,
+      "confidence": 0.9708663
+    },
+    {
+      "HARPNUM": 13457,
+      "T_REC": "2026-04-20 23:48:00+00:00",
+      "flare_risk": 0.027784158,
+      "alert": 0,
+      "confidence": 0.97221583
+    }
+  ]
+}
